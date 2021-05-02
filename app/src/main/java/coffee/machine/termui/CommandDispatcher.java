@@ -3,13 +3,16 @@ package coffee.machine.termui;
 import coffee.machine.Error;
 
 import java.util.Map;
+import java.util.concurrent.Executor;
 import java.util.function.BiConsumer;
 
 public class CommandDispatcher {
     private final Map<String, BiConsumer<Command, ResponseWriter>> handlerMap;
+    private final Executor executor;
 
-    public CommandDispatcher(Map<String, BiConsumer<Command, ResponseWriter>> handlerMap) {
+    public CommandDispatcher(Map<String, BiConsumer<Command, ResponseWriter>> handlerMap, Executor executor) {
         this.handlerMap = handlerMap;
+        this.executor = executor;
     }
 
     public void attach(CommandParser commandParser, ResponseWriter responseWriter) {
@@ -27,11 +30,14 @@ public class CommandDispatcher {
                 throw new IllegalStateException("Unmapped command in dispatcher");
             }
 
-            try {
-                handler.accept(command, responseWriter);
-            } catch (Exception e) {
-                responseWriter.error(new Error(Error.Code.UNKNOWN, e.getMessage()));
-            }
+            executor.execute(() -> {
+                try {
+                    handler.accept(command, responseWriter);
+                } catch (Exception e) {
+                    responseWriter.error(new Error(Error.Code.UNKNOWN, e.getMessage()));
+                    e.printStackTrace();
+                }
+            });
         });
     }
 }

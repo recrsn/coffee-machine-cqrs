@@ -3,31 +3,128 @@
  */
 package coffee.machine;
 
+import coffee.machine.aggregates.AggregateLifecycle;
+import coffee.machine.aggregates.AggregateStore;
+import coffee.machine.aggregates.CoffeeMachineAggregate;
+import coffee.machine.aggregates.CoffeeOrderAggregate;
+import coffee.machine.aggregates.IngredientsStoreAggregate;
+import coffee.machine.aggregates.SlotAggregate;
+import coffee.machine.commands.*;
+import coffee.machine.events.*;
+import coffee.machine.mappers.RecipeListMapper;
+import coffee.machine.models.Ingredient;
+import coffee.machine.models.Recipe;
+import coffee.machine.projections.CoffeeOrderProjection;
+import coffee.machine.projections.IngredientStoreProjection;
+import coffee.machine.sagas.CoffeeMachineSaga;
+import coffee.machine.sagas.CoffeeSaga;
+import coffee.machine.sagas.IngredientRefilSaga;
 import coffee.machine.termui.ResponseWriter;
 
 import java.io.InputStreamReader;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import static coffee.machine.termui.CommandParser.arguments;
 import static coffee.machine.termui.CommandParser.command;
 
 public class Main {
-
     public static void main(String[] args) {
         ResponseWriter responseWriter = new ResponseWriter(System.out, System.err);
 
+        DefaultEventBus sagaEventBus = new DefaultEventBus();
+
+        AggregateStore aggregateStore = new AggregateStore(CoffeeMachineAggregate.class,
+                CoffeeOrderAggregate.class,
+                SlotAggregate.class,
+                IngredientsStoreAggregate.class);
+
+        AggregateLifecycle aggregateLifecycle = new AggregateLifecycle(aggregateStore, sagaEventBus);
+
+        CommandGateway commandGateway = CommandGateway.builder()
+                .with(aggregateStore)
+                .handle(InitializeCoffeeMachineCommand.class, aggregateLifecycle::initializeCoffeeMachineAggregate)
+                .handle(InitializeSlotCommand.class, aggregateLifecycle::initializeSlotAggregate)
+                .handle(InitializeIngredientStoreCommand.class, aggregateLifecycle::initializeIngredientsStoreAggregate)
+                .handle(CreateCoffeeOrderCommand.class, aggregateLifecycle::initializeCoffeeOrderAggregate)
+
+                .handle(ActivateSlotCommand.class, CoffeeMachineAggregate::onActivateSlotCommand)
+                .handle(AddIngredientStoreCommand.class, CoffeeMachineAggregate::onAddIngredientStoreCommand)
+                .handle(RefillIngredientCommand.class, CoffeeMachineAggregate::onRefillIngredient)
+                .handle(MakeCoffeeCommand.class, CoffeeMachineAggregate::onMakeCoffeeCommand)
+                .handle(CompleteCoffeeBrewCommand.class, CoffeeMachineAggregate::onCoffeeBrewComplete)
+
+                .handle(PrepareSlotCommand.class, SlotAggregate::onPrepareSlotCommand)
+                .handle(BrewCoffeeCommand.class, SlotAggregate::onBrewCoffeeCommand)
+                .handle(CancelCoffeeBrewCommand.class, SlotAggregate::onCancelCoffeeBrewCommand)
+
+                .handle(AddIngredientCommand.class, IngredientsStoreAggregate::onAddIngredientCommand)
+                .handle(ProvideCoffeeIngredientsCommand.class, IngredientsStoreAggregate::onProvideCoffeeIngredients)
+
+                .handle(UpdateCoffeeOrderStatusCommand.class, CoffeeOrderAggregate::onUpdateCoffeeOrderStatusCommand)
+
+                .build();
+
+        CoffeeMachineSaga coffeeMachineSaga = new CoffeeMachineSaga(commandGateway);
+        CoffeeSaga coffeeSaga = new CoffeeSaga(commandGateway);
+        IngredientRefilSaga ingredientRefilSaga = new IngredientRefilSaga(commandGateway);
+
+        sagaEventBus.addListener(CoffeeMachineInitializationStartEvent.class,
+                coffeeMachineSaga::onCoffeeMachineInitializationStarted);
+        sagaEventBus.addListener(SlotInitializeEvent.class, coffeeMachineSaga::onSlotInitialized);
+        sagaEventBus.addListener(IngredientStoreInitializeEvent.class,
+                coffeeMachineSaga::onIngredientStoreInitializeEvent);
+
+        sagaEventBus.addListener(CoffeeOrderCreatedEvent.class, coffeeSaga::onCoffeeOrderCreatedEvent);
+        sagaEventBus.addListener(CoffeeBrewRequestEvent.class, coffeeSaga::onCoffeeBrewRequestEvent);
+        sagaEventBus.addListener(CoffeeBrewStartEvent.class, coffeeSaga::onCoffeeBrewStartEvent);
+        sagaEventBus.addListener(IngredientsConsumeEvent.class, coffeeSaga::onIngredientsConsumeEvent);
+        sagaEventBus.addListener(CoffeeBrewCompleteEvent.class, coffeeSaga::onCoffeeBrewCompleteEvent);
+        sagaEventBus.addListener(CoffeeBrewCancelEvent.class, coffeeSaga::onCoffeeBrewCancelEvent);
+
+        sagaEventBus.addListener(IngredientRefillEvent.class, ingredientRefilSaga::onIngredientRefillEvent);
+
+        CoffeeOrderProjection coffeeOrderProjection = new CoffeeOrderProjection(responseWriter);
+        sagaEventBus.addListener(CoffeeOrderStatusUpdateEvent.class,
+                coffeeOrderProjection::onCoffeeOrderStatusUpdateEvent);
+
+
+        IngredientStoreProjection ingredientStoreProjection = new IngredientStoreProjection(responseWriter);
+        sagaEventBus.addListener(IngredientLevelChangeEvent.class,
+                ingredientStoreProjection::onIngredientLevelChangeEvent);
+
+        RecipeRegistry recipeRegistry = new RecipeRegistry(List.of(
+                new Recipe("mocha", "Mocha", 5000, Map.of(
+                        Ingredient.WATER, 1,
+                        Ingredient.MILK, 1,
+                        Ingredient.COFFEE, 1
+                )),
+                new Recipe("espresso", "Espresso", 5000, Map.of(
+                        Ingredient.WATER, 1,
+                        Ingredient.COFFEE, 2
+                ))
+        ));
+
+        RecipeListMapper recipeListMapper = new RecipeListMapper();
+        Handler handler = new Handler(commandGateway, recipeRegistry, recipeListMapper);
+
+        ExecutorService executor = Executors.newCachedThreadPool();
+
         Application.builder()
+                .with(executor)
                 .with(new InputStreamReader(System.in))
                 .with(responseWriter)
                 .add(command("init", "initialize a coffee machine",
-                        arguments("slots", "total number of slots")), null)
-                .add(command("info", "show coffee machine info"), null)
-                .add(command("list-recipes", "list available recipes"), null)
-                .add(command("make-coffee", "make coffee",
-                        arguments("slot", "slot to use", "recipe", "coffee recipe")), null)
-                .add(command("fill-ingredient", "refil ingredient",
-                        arguments("name", "ingredient name", "quantity", "quantity")), null)
+                        arguments("slots", "total number of slots")), handler::init)
+                .add(command("list-recipes", "list available recipes"), handler::listRecipes)
+                .add(command("make-coffee", "make coffee", arguments("recipe", "coffee recipe")), handler::makeCoffee)
+                .add(command("fill-ingredient", "refill ingredient",
+                        arguments("name", "ingredient name", "quantity", "quantity")), handler::fillIngredient)
                 .build()
                 .start();
 
+        Runtime.getRuntime().addShutdownHook(new Thread(executor::shutdown));
     }
 }

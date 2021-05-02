@@ -4,6 +4,7 @@ import coffee.machine.Error;
 import org.junit.Test;
 
 import java.util.Map;
+import java.util.concurrent.Executor;
 import java.util.stream.Stream;
 
 import static org.junit.Assert.assertEquals;
@@ -18,8 +19,12 @@ public class CommandDispatcherTest {
         when(commandParser.commands())
                 .thenReturn(Stream.of(Result.success(new Command("unknown", Map.of()))));
 
-        CommandDispatcher dispatcher = new CommandDispatcher(Map.of());
+        CommandDispatcher dispatcher = new CommandDispatcher(Map.of(), directExecutor());
         dispatcher.attach(commandParser, responseWriter);
+    }
+
+    private Executor directExecutor() {
+        return Runnable::run;
     }
 
     @Test
@@ -27,7 +32,7 @@ public class CommandDispatcherTest {
         when(commandParser.commands())
                 .thenReturn(Stream.of(Result.error(Error.Code.COMMAND_NOT_FOUND, "test")));
 
-        CommandDispatcher dispatcher = new CommandDispatcher(Map.of());
+        CommandDispatcher dispatcher = new CommandDispatcher(Map.of(), directExecutor());
         dispatcher.attach(commandParser, responseWriter);
 
         verify(responseWriter, only()).error(new Error(Error.Code.COMMAND_NOT_FOUND, "test"));
@@ -41,7 +46,7 @@ public class CommandDispatcherTest {
         CommandDispatcher dispatcher = new CommandDispatcher(Map.of("test", (c, rw) -> {
             assertEquals(test, c);
             assertEquals(rw, responseWriter);
-        }));
+        }), directExecutor());
 
         dispatcher.attach(commandParser, responseWriter);
     }
@@ -53,7 +58,7 @@ public class CommandDispatcherTest {
 
         CommandDispatcher dispatcher = new CommandDispatcher(Map.of("test", (c, rw) -> {
             throw new RuntimeException("unknown");
-        }));
+        }), directExecutor());
 
         dispatcher.attach(commandParser, responseWriter);
         verify(responseWriter, only()).error(new Error(Error.Code.UNKNOWN, "unknown"));

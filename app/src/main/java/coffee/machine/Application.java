@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executor;
 import java.util.function.BiConsumer;
 
 import static coffee.machine.termui.CommandParser.command;
@@ -46,6 +47,12 @@ public class Application {
         private final List<CommandSpec> commandSpecList = new ArrayList<>();
         private ResponseWriter responseWriter;
         private InputStreamReader reader;
+        private Executor executor;
+
+        public Builder with(Executor executor) {
+            this.executor = executor;
+            return this;
+        }
 
         public Builder with(ResponseWriter responseWriter) {
             this.responseWriter = responseWriter;
@@ -60,7 +67,7 @@ public class Application {
 
         public Application build() {
             add(command("help", "show help"), new HelpMessageHandler(commandSpecList));
-            CommandDispatcher commandDispatcher = new CommandDispatcher(handlerMap);
+            CommandDispatcher commandDispatcher = new CommandDispatcher(handlerMap, executor);
             CommandParser commandParser = new CommandParser(reader, commandSpecList);
             return new Application(responseWriter, commandParser, commandDispatcher);
         }

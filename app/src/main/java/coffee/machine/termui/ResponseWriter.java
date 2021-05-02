@@ -13,11 +13,15 @@ public class ResponseWriter {
         this.errorWriter = errorWriter;
     }
 
-    public void error(Error error) {
+    public synchronized void error(Error error) {
         errorWriter.printf("ERROR: %s %s\n", error.code(), error.description());
     }
 
-    public void message(String message) {
+    public synchronized void message(String message) {
         writer.println(message);
+    }
+
+    public synchronized void ok() {
+        writer.println("OK");
     }
 }
